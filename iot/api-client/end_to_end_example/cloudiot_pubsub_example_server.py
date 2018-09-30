@@ -46,6 +46,7 @@ from google.cloud import pubsub
 from googleapiclient import discovery
 from googleapiclient.errors import HttpError
 from oauth2client.service_account import ServiceAccountCredentials
+from google.cloud import bigquery
 
 
 API_SCOPES = ['https://www.googleapis.com/auth/cloud-platform']
@@ -58,8 +59,11 @@ class Server(object):
     """Represents the state of the server."""
 
     def __init__(self, service_account_json):
-        credentials = ServiceAccountCredentials.from_json_keyfile_name(
-            service_account_json, API_SCOPES)
+        from google.auth import compute_engine
+        credentials = compute_engine.Credentials()
+        #credentials = ServiceAccountCredentials.from_json_keyfile_name(
+        #    service_account_json, API_SCOPES)  
+
         if not credentials:
             sys.exit('Could not load service account credential '
                      'from {}'.format(service_account_json))
@@ -73,6 +77,13 @@ class Server(object):
             credentials=credentials,
             cache_discovery=False)
 
+        self._bigquery_client = bigquery.Client()
+        dataset_id = 'IoT'
+        table_id = 'humidity'
+        # Set the destination table
+        self._table = self._bigquery_client.get_table(
+            self._bigquery_client.dataset(dataset_id).table(table_id))
+
         # Used to serialize the calls to the
         # modifyCloudToDeviceConfig REST method. This is needed
         # because the google-api-python-client library is built on top
@@ -81,22 +92,34 @@ class Server(object):
         #     api-client-library/python/guide/thread_safety
         self._update_config_mutex = Lock()
 
+    def _insertToBigQuery(self, device_id, humidity, timestamp):
+        row = (humidity, timestamp, device_id)
+        errors = self._bigquery_client.insert_rows(self._table, [row])  # API request
+
+        if(errors != []):
+            print('Error write into bigquery: {}\n data: {}'.format(errors,row))
+        else:
+            print('Success writing into bigquery data: {}'.format(errors,row))
+        return
+
     def _update_device_config(self, project_id, region, registry_id, device_id,
                               data):
         """Push the data to the given device as configuration."""
+        print('The device ({})  Got data: {}'.format(device_id,str(data)))
+        self._insertToBigQuery(device_id, data['humidity'], data['timestamp'])
         config_data = None
-        print('The device ({}) has a temperature '
-              'of: {}'.format(device_id, data['temperature']))
-        if data['temperature'] < 0:
+        print('The device ({}) has a humidity '
+              'of: {}'.format(device_id, data['humidity']))
+        if data['humidity'] > 50:
             # Turn off the fan.
-            config_data = {'fan_on': False}
-            print('Setting fan state for device', device_id, 'to off.')
-        elif data['temperature'] > 10:
+            config_data = {'water_on': False}
+            print('Setting water', device_id, 'to on.')
+        elif data['humidity'] <= 50:
             # Turn on the fan
-            config_data = {'fan_on': True}
-            print('Setting fan state for device', device_id, 'to on.')
+            config_data = {'water_on': True}
+            print('Setting water', device_id, 'to off.')
         else:
-            # Temperature is OK, don't need to push a new config.
+            # humidity is OK, don't need to push a new config.
             return
 
         config_data_json = json.dumps(config_data)
@@ -152,7 +175,9 @@ class Server(object):
             subscribed topic.
             """
             try:
-                data = json.loads(message.data)
+                json_data = message.data.decode("utf-8")
+                print('BEN: Data:',json_data)
+                data = json.loads(json_data)
             except ValueError as e:
                 print('Loading Payload ({}) threw an Exception: {}.'.format(
                     message.data, e))

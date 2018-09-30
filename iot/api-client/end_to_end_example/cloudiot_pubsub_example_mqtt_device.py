@@ -11,16 +11,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 r"""Sample device that consumes configuration from Google Cloud IoT.
-This example represents a simple device with a temperature sensor and a fan
-(simulated with software). When the device's fan is turned on, its temperature
+This example represents a simple device with a humidity sensor and a fan
+(simulated with software). When the device's fan is turned on, its humidity
 decreases by one degree per second, and when the device's fan is turned off,
-its temperature increases by one degree per second.
+its humidity increases by one degree per second.
 
-Every second, the device publishes its temperature reading to Google Cloud IoT
-Core. The server meanwhile receives these temperature readings, and decides
+Every second, the device publishes its humidity reading to Google Cloud IoT
+Core. The server meanwhile receives these humidity readings, and decides
 whether to re-configure the device to turn its fan on or off. The server will
-instruct the device to turn the fan on when the device's temperature exceeds 10
-degrees, and to turn it off when the device's temperature is less than 0
+instruct the device to turn the fan on when the device's humidity exceeds 10
+degrees, and to turn it off when the device's humidity is less than 0
 degrees. In a real system, one could use the cloud to compute the optimal
 thresholds for turning on and off the fan, but for illustrative purposes we use
 a simple threshold model.
@@ -75,19 +75,19 @@ class Device(object):
     """Represents the state of a single device."""
 
     def __init__(self):
-        self.temperature = 0
+        self.humidity = 0
         self.fan_on = False
         self.connected = False
 
     def update_sensor_data(self):
         """Pretend to read the device's sensor data.
-        If the fan is on, assume the temperature decreased one degree,
+        If the fan is on, assume the humidity decreased one degree,
         otherwise assume that it increased one degree.
         """
         if self.fan_on:
-            self.temperature -= 1
+            self.humidity -= 1
         else:
-            self.temperature += 1
+            self.humidity += 1
 
     def wait_for_connection(self, timeout):
         """Wait for the device to become connected."""
@@ -134,7 +134,9 @@ class Device(object):
 
         # The config is passed in the payload of the message. In this example,
         # the server sends a serialized JSON string.
-        data = json.loads(payload)
+        json_payload = payload.decode("utf-8")
+        print('BEN: Data:',json_payload)
+        data = json.loads(json_payload)
         if data['fan_on'] != self.fan_on:
             # If changing the state of the fan, print a message and
             # update the internal state.
@@ -219,12 +221,13 @@ def main():
     client.on_subscribe = device.on_subscribe
     client.on_message = device.on_message
 
-    client.connect(args.mqtt_bridge_hostname, args.mqtt_bridge_port)
+    print('BEN',args.mqtt_bridge_hostname,"p:"+str(args.mqtt_bridge_port))
+    client.connect(args.mqtt_bridge_hostname, int(args.mqtt_bridge_port))
 
     client.loop_start()
 
     # This is the topic that the device will publish telemetry events
-    # (temperature data) to.
+    # (humidity data) to.
     mqtt_telemetry_topic = '/devices/{}/events'.format(args.device_id)
 
     # This is the topic that the device will receive configuration updates on.
@@ -236,15 +239,15 @@ def main():
     # Subscribe to the config topic.
     client.subscribe(mqtt_config_topic, qos=1)
 
-    # Update and publish temperature readings at a rate of one per second.
+    # Update and publish humidity readings at a rate of one per second.
     for _ in range(args.num_messages):
         # In an actual device, this would read the device's sensors. Here,
-        # you update the temperature based on whether the fan is on.
+        # you update the humidity based on whether the fan is on.
         device.update_sensor_data()
 
-        # Report the device's temperature to the server by serializing it
+        # Report the device's humidity to the server by serializing it
         # as a JSON string.
-        payload = json.dumps({'temperature': device.temperature})
+        payload = json.dumps({'humidity': device.humidity, 'timestamp': time.time()})
         print('Publishing payload', payload)
         client.publish(mqtt_telemetry_topic, payload, qos=1)
         # Send events every second.
